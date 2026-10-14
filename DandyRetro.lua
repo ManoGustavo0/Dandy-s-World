@@ -1,22 +1,22 @@
--- Dandy Retro | ESP, auto skill check e corrida sem gasto | RetroBox UI 1.9.2
+-- Dandy Retro | ESP, auto skill check e corrida sem gasto | RetroBox API 2 (stable)
 local created
 
 local function main()
     assert(game.GameId == 5569032992, "Este script é para Dandy's World.")
     if type(setthreadidentity) == "function" then setthreadidentity(8) end
-    local URL = "https://raw.githubusercontent.com/ManoGustavo0/RetroBox/4eb987097a9ee37ea9b84bf87ab797a93123590b/RetroBox-UI-v1.1.0/retrobox-ui/RetroBox.lua"
+    local LOADER_URL = "https://raw.githubusercontent.com/ManoGustavo0/RetroBox/main/dist/bootstrap/v2.lua"
     local loaded, Library = pcall(function()
         assert(type(loadstring) == "function", "O executor não oferece loadstring.")
         local ok, getter = pcall(function() return game.HttpGet end)
         assert(ok and type(getter) == "function", "O executor não oferece game:HttpGet.")
-        local source = game:HttpGet(URL)
+        local source = game:HttpGet(LOADER_URL)
         assert(type(source) == "string" and #source > 0, "O raw retornou uma fonte vazia.")
-        local chunk, err = loadstring(source)
+        local chunk, err = loadstring(source, "@RetroBox-bootstrap-v2")
         assert(chunk, err)
-        return chunk()
+        return chunk({Channel = "stable"})
     end)
     assert(loaded, "Falha ao carregar RetroBox: " .. tostring(Library))
-    assert(type(Library) == "table" and Library.Version == "1.9.2", "O raw não retornou RetroBox 1.9.2.")
+    assert(type(Library) == "table" and Library.APIVersion == 2 and type(Library.CreateWindow) == "function", "O bootstrap não retornou uma RetroBox compatível com a API 2.")
 
     local Players = game:GetService("Players")
     local RS = game:GetService("ReplicatedStorage")
@@ -369,7 +369,7 @@ local function main()
         Tooltip = "Destrói a janela e limpa todos os recursos do script.", Callback = function() hub:Destroy(); return true end})
     window:Notify({Title = "Dandy Retro", Content = "ESP pronto. Auto minigame e stamina são ativados nas suas abas.",
         Kind = "success", Icon = "eye", Duration = 5})
-    print("[DandyRetro] pronto · RetroBox 1.9.2")
+    print("[DandyRetro] pronto · RetroBox " .. Library.Version)
 end
 
 task.defer(function()
