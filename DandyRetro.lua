@@ -1,22 +1,23 @@
--- Dandy Retro | ESP, auto skill check e corrida sem gasto | RetroBox API 2 (stable)
+-- Dandy Retro | ESP, auto skill check e corrida sem gasto | RetroBox API 2 Stable
 local created
 
 local function main()
     assert(game.GameId == 5569032992, "Este script é para Dandy's World.")
     if type(setthreadidentity) == "function" then setthreadidentity(8) end
-    local LOADER_URL = "https://raw.githubusercontent.com/ManoGustavo0/RetroBox/main/dist/bootstrap/v2.lua"
+    local URL = "https://raw.githubusercontent.com/ManoGustavo0/RetroBox/main/dist/bootstrap/v2.lua"
     local loaded, Library = pcall(function()
         assert(type(loadstring) == "function", "O executor não oferece loadstring.")
         local ok, getter = pcall(function() return game.HttpGet end)
         assert(ok and type(getter) == "function", "O executor não oferece game:HttpGet.")
-        local source = game:HttpGet(LOADER_URL)
+        local source = game:HttpGet(URL)
         assert(type(source) == "string" and #source > 0, "O raw retornou uma fonte vazia.")
-        local chunk, err = loadstring(source, "@RetroBox-bootstrap-v2")
+        local chunk, err = loadstring(source)
         assert(chunk, err)
         return chunk({Channel = "stable"})
     end)
     assert(loaded, "Falha ao carregar RetroBox: " .. tostring(Library))
-    assert(type(Library) == "table" and Library.APIVersion == 2 and type(Library.CreateWindow) == "function", "O bootstrap não retornou uma RetroBox compatível com a API 2.")
+    assert(type(Library) == "table" and Library.APIVersion == 2 and type(Library.CreateWindow) == "function",
+        "O bootstrap não retornou uma RetroBox compatível com a API 2.")
 
     local Players = game:GetService("Players")
     local RS = game:GetService("ReplicatedStorage")
@@ -35,7 +36,8 @@ local function main()
     if env.DandyRetro then env.DandyRetro:Destroy() end
 
     local hub = {alive = true, inputs = 0, lastResult = "—", autoStatus = "Auto minigame desligado",
-        staminaStatus = "Corrida normal", counts = {Items = 0, Generators = 0, Monsters = 0}}
+        staminaStatus = "Corrida normal", libraryVersion = Library:GetVersion(),
+        counts = {Items = 0, Generators = 0, Monsters = 0, Players = 0}}
     local window = Library:CreateWindow({
         Id = "DandyRetro-" .. game.GameId, Title = "Dandy Retro",
         Subtitle = "Dandy Retro · ESP, extração e stamina", Icon = "eye",
@@ -67,16 +69,27 @@ local function main()
         {key = "Items", id = "items", title = "ESP de itens", icon = "backpack", color = Color3.fromRGB(75, 235, 125)},
         {key = "Generators", id = "machines", title = "ESP de máquinas", icon = "tools", color = Color3.fromRGB(70, 205, 255)},
         {key = "Monsters", id = "monsters", title = "ESP de monstros", icon = "skull", color = Color3.fromRGB(255, 80, 100)},
+        {key = "Players", id = "players", title = "ESP de jogadores e corações", icon = "user", color = Color3.fromRGB(245, 235, 125)},
     }
     local colors = {}
     for _, category in ipairs(categories) do
         colors[category.key] = category.color
         espSection:AddToggle({Id = "dw.esp." .. category.id, Title = category.title, Icon = category.icon, Default = true,
-            Tooltip = "Mostra nome, distância e contorno através das paredes. Atualiza quando o andar muda."})
-        category.picker = espSection:AddColorPicker({Id = "dw.color." .. category.id, Title = "Cor · " .. category.title, Icon = "palette",
+            Tooltip = category.key == "Players" and "Mostra os outros jogadores, a distância e a vida atual em corações durante a partida. No lobby mostra vida normal."
+                or "Mostra nome, distância e contorno através das paredes. Atualiza quando o andar muda."})
+        category.picker = espSection:AddColorPicker({Id = "dw.color." .. category.id,
+            Title = category.key == "Generators" and "Cor · máquinas de linha" or "Cor · " .. category.title, Icon = "palette",
             Default = category.color, AllowRainbow = false, AllowOpacity = false,
             Callback = function(color) colors[category.key] = color end})
     end
+    local circleColor = Color3.fromRGB(195, 135, 255)
+    local circlePicker = espSection:AddColorPicker({Id = "dw.color.machine-circle", Title = "Cor · máquinas de bolinha", Icon = "palette",
+        Default = circleColor, AllowRainbow = false, AllowOpacity = false,
+        Tooltip = "Cor do tipo Circle. A porcentagem de extração tem destaque e cor próprios.",
+        Callback = function(color) circleColor = color end})
+    window:Manage(window:GetFlagState("dw.color.machine-circle"):Subscribe(function()
+        circleColor = circlePicker:GetColor()
+    end, true), "Disconnect")
     espSection:AddToggle({Id = "dw.esp.completed", Title = "Mostrar máquinas concluídas", Icon = "success", Default = true,
         Tooltip = "As máquinas concluídas aparecem com a indicação CONCLUÍDA."})
     espSection:AddSlider({Id = "dw.esp.distance", Title = "Distância máxima", Icon = "sliders",
@@ -115,32 +128,116 @@ local function main()
         highlight.Parent = overlay
         local gui = Instance.new("BillboardGui")
         gui.Name = "DandyRetroName"; gui.Adornee = root; gui.AlwaysOnTop = true
-        gui.Size = UDim2.fromOffset(230, 52); gui.StudsOffsetWorldSpace = Vector3.new(0, 3, 0)
+        gui.Size = UDim2.fromOffset(290, 86); gui.StudsOffsetWorldSpace = Vector3.new(0, 3.5, 0)
         gui.Parent = overlay
         local label = Instance.new("TextLabel")
-        label.Size = UDim2.fromScale(1, 1); label.BackgroundTransparency = 1
+        label.Name = "Caption"; label.Size = UDim2.new(1, 0, 1, -9); label.BackgroundTransparency = 1
         label.Font = Enum.Font.Code; label.TextSize = 13; label.TextWrapped = true
+        label.RichText = true; label.AutoLocalize = false
         label.TextStrokeTransparency = .15; label.TextStrokeColor3 = Color3.new(0, 0, 0)
         label.Parent = gui
-        entry = {highlight = highlight, gui = gui, label = label}
+        local bar = Instance.new("Frame")
+        bar.Name = "ProgressBar"; bar.AnchorPoint = Vector2.new(.5, 1)
+        bar.Position = UDim2.new(.5, 0, 0, 69); bar.Size = UDim2.fromOffset(96, 3)
+        bar.BackgroundColor3 = Color3.fromRGB(25, 25, 32); bar.BorderSizePixel = 0; bar.Visible = false; bar.Parent = gui
+        local fill = Instance.new("Frame")
+        fill.Name = "Fill"; fill.Size = UDim2.fromScale(0, 1); fill.BorderSizePixel = 0; fill.Parent = bar
+        entry = {highlight = highlight, gui = gui, label = label, bar = bar, fill = fill}
         entries[model] = entry
         return entry
+    end
+    local function escape(value)
+        return tostring(value):gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;"):gsub('"', "&quot;")
+    end
+    local function colored(text, color, bold, size)
+        text = escape(text)
+        if bold then text = "<b>" .. text .. "</b>" end
+        return string.format('<font color="#%s"%s>%s</font>', color:ToHex(), size and (' size="' .. size .. '"') or "", text)
+    end
+    local function progressColor(ratio)
+        return Color3.fromHSV(.04 + .29 * math.clamp(ratio, 0, 1), .72, 1)
     end
     local function machineText(model)
         local stats = model:FindFirstChild("Stats")
         local done = stats and stats:FindFirstChild("Completed")
         local finished = done and done.Value == true or model:GetAttribute("FloorCompletionCounted") == true
-        if finished then return "Máquina · CONCLUÍDA", true end
+        local types, used = {}, {}
+        local function addType(kind)
+            if type(kind) ~= "string" or used[kind] then return end
+            used[kind] = true; types[#types + 1] = kind
+        end
+        addType(model:GetAttribute("MinigameType"))
+        for slot = 2, 8 do addType(model:GetAttribute("Prompt" .. slot .. "MinigameType")) end
+        if #types == 0 then
+            local list = model:GetAttribute("MinigameTypes")
+            if type(list) == "string" then for kind in list:gmatch("[%w_]+") do addType(kind) end end
+        end
+        local names = {Original = "LINHA", Circle = "BOLINHA", MovementTreadmill = "TOQUES", Barnaby = "ARCADE"}
+        local labels = {}
+        for _, kind in ipairs(types) do labels[#labels + 1] = names[kind] or kind end
+        local name = "Máquina · " .. (#labels > 0 and table.concat(labels, " + ") or "TIPO PENDENTE")
         local amount = stats and stats:FindFirstChild("CurrentAmount")
         local required = stats and stats:FindFirstChild("RequiredAmount")
-        if amount and required and required.Value > 0 then
-            return string.format("Máquina · %.0f%%", math.clamp(amount.Value / required.Value * 100, 0, 100)), false
+        local ratio
+        if finished then ratio = 1
+        elseif amount and required and required.Value > 0 then ratio = math.clamp(amount.Value / required.Value, 0, 1) end
+        local progress = finished and "CONCLUÍDA · 100%" or ratio and string.format("EXTRAÇÃO · %.0f%%", ratio * 100) or "PROGRESSO PENDENTE"
+        return name, finished, ratio, progress, used.Circle and not used.Original
+    end
+    local function playerText(other, model, humanoid)
+        local health, max = math.max(0, humanoid.Health), math.max(1, humanoid.MaxHealth)
+        local color = progressColor(health / max)
+        local stats = model:FindFirstChild("Stats")
+        local toonHealth = stats and stats:FindFirstChild("Health")
+        local life
+        if toonHealth and max <= 8 then
+            local full, total = math.clamp(math.ceil(health), 0, math.ceil(max)), math.ceil(max)
+            life = string.rep("♥", full) .. string.rep("♡", total - full) .. string.format("  %.0f/%.0f", health, max)
+        else life = string.format("VIDA · %.0f/%.0f", health, max) end
+        local shields = model:GetAttribute("ShieldHearts")
+        if type(shields) == "number" and shields > 0 then life ..= "  +" .. math.floor(shields) .. " escudo(s)" end
+        return other.DisplayName, colored(life, color, true)
+    end
+    local function renderESP(model, category, seen, position, other)
+        local anchor = rootOf(model)
+        if not anchor then return end
+        local distance = position and (anchor.Position - position).Magnitude or 0
+        if not window:GetFlag("dw.esp." .. category.id) or distance > window:GetFlag("dw.esp.distance") then return end
+        local text, finished, ratio, detail = model.Name, false, nil, nil
+        local color = colors[category.key]
+        local size = window:GetFlag("dw.esp.text")
+        if category.key == "Generators" then
+            local circleOnly
+            text, finished, ratio, detail, circleOnly = machineText(model)
+            if finished and not window:GetFlag("dw.esp.completed") then return end
+            if circleOnly then color = circleColor end
+            detail = colored(detail, ratio and progressColor(ratio) or Color3.fromRGB(220, 220, 230), true, size + 4)
+        elseif category.key == "Monsters" then text = "Twisted " .. model.Name:gsub("Monster$", "")
+        elseif category.key == "Players" then
+            local humanoid = model:FindFirstChildOfClass("Humanoid")
+            if not humanoid or not other then return end
+            text, detail = playerText(other, model, humanoid)
         end
-        return "Máquina · " .. tostring(model:GetAttribute("MinigameType") or "Extração"), false
+        seen[model] = true
+        local entry = entryFor(model, anchor)
+        entry.gui.Size = UDim2.fromOffset(290, math.max(86, (size + 4) * 4 + 12))
+        entry.highlight.FillColor = color; entry.highlight.OutlineColor = color
+        entry.label.TextColor3 = color; entry.label.TextSize = size
+        entry.label.Text = colored(text, color, true) .. (detail and ("\n" .. detail) or "")
+            .. "\n" .. colored(string.format("%.0f studs", distance), Color3.fromRGB(235, 235, 245), false)
+        entry.bar.Visible = ratio ~= nil
+        if ratio then
+            entry.fill.Size = UDim2.fromScale(ratio, 1); entry.fill.BackgroundColor3 = progressColor(ratio)
+            local labelHeight = entry.gui.Size.Y.Offset - 9
+            local textHeight = entry.label.TextBounds.Y
+            if textHeight <= 0 then textHeight = (size + 2) * 3 end
+            entry.bar.Position = UDim2.new(.5, 0, 0, math.min(entry.gui.Size.Y.Offset - 1,
+                (labelHeight + math.min(textHeight, labelHeight)) * .5 + 7))
+        end
     end
     local function updateESP(ctx)
         ctx:ThrowIfCancelled()
-        local seen, counts = {}, {Items = 0, Generators = 0, Monsters = 0}
+        local seen, counts = {}, {Items = 0, Generators = 0, Monsters = 0, Players = 0}
         local character = player.Character
         local root = character and character:FindFirstChild("HumanoidRootPart")
         local position = root and root.Position or workspace.CurrentCamera and workspace.CurrentCamera.CFrame.Position
@@ -158,28 +255,25 @@ local function main()
                             local anchor = rootOf(model)
                             if anchor then
                                 counts[category.key] += 1
-                                local text, finished = model.Name, false
-                                if category.key == "Generators" then text, finished = machineText(model)
-                                elseif category.key == "Monsters" then text = "Twisted " .. model.Name:gsub("Monster$", "") end
-                                local distance = position and (anchor.Position - position).Magnitude or 0
-                                if window:GetFlag("dw.esp." .. category.id) and distance <= window:GetFlag("dw.esp.distance")
-                                    and (not finished or window:GetFlag("dw.esp.completed")) then
-                                    seen[model] = true
-                                    local entry = entryFor(model, anchor)
-                                    local color = colors[category.key]
-                                    entry.highlight.FillColor = color; entry.highlight.OutlineColor = color
-                                    entry.label.TextColor3 = color; entry.label.TextSize = window:GetFlag("dw.esp.text")
-                                    entry.label.Text = string.format("%s\n%.0f studs", text, distance)
-                                end
+                                renderESP(model, category, seen, position)
                             end
                         end
                     end
                 end
             end
         end
+        local playerCategory = categories[4]
+        for _, other in ipairs(Players:GetPlayers()) do
+            local model = other.Character
+            if other ~= player and model and model.Parent and model:FindFirstChildOfClass("Humanoid") and rootOf(model) then
+                counts.Players += 1
+                renderESP(model, playerCategory, seen, position, other)
+            end
+        end
         for model in pairs(entries) do if not seen[model] or not model.Parent then discard(model) end end
         hub.counts = counts
-        espStatus:SetText(string.format("Itens: %d · Máquinas: %d · Monstros: %d", counts.Items, counts.Generators, counts.Monsters))
+        espStatus:SetText(string.format("Itens: %d · Máquinas: %d · Monstros: %d · Jogadores: %d",
+            counts.Items, counts.Generators, counts.Monsters, counts.Players))
     end
     window:CreateTask({Id = "dw.esp.update", Interval = .2, Start = true, OnError = "Continue", Callback = updateESP})
     for _, category in ipairs(categories) do
@@ -304,14 +398,16 @@ local function main()
     end
     local function staminaStep(ctx)
         ctx:ThrowIfCancelled()
+        local character = player.Character
+        local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+        local stats = character and character:FindFirstChild("Stats")
+        if not humanoid or humanoid.Health <= 0 or not stats or not stats:FindFirstChild("RunSpeed") then
+            releaseSpeed(); hub.staminaStatus = "Aguardando personagem da partida"; return
+        end
         if not proxy then installSprintProxy() end
         if getUps(sprint.init)[2] ~= proxy then
             staminaScope:Clean(); installSprintProxy()
         end
-        local character = player.Character
-        local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-        local stats = character and character:FindFirstChild("Stats")
-        if not humanoid or humanoid.Health <= 0 or not stats then releaseSpeed(); hub.staminaStatus = "Aguardando personagem"; return end
         local decoding = character:FindFirstChild("Decoding")
         if gameContext.currentgenerator or decoding and decoding.Value or input:IsGameplaySuspended()
             or character:GetAttribute("StaminaFatigued") or character:GetAttribute("TreadmillDazed")
@@ -354,14 +450,14 @@ local function main()
     local row = extract:CreateRow({Gap = 10, StackAt = 440})
     function hub:Stop()
         window:SetFlags({["dw.esp.items"] = false, ["dw.esp.machines"] = false, ["dw.esp.monsters"] = false,
-            ["dw.auto.skill"] = false, ["dw.stamina.enabled"] = false})
+            ["dw.esp.players"] = false, ["dw.auto.skill"] = false, ["dw.stamina.enabled"] = false})
         for model in pairs(entries) do discard(model) end
     end
     function hub:GetSnapshot()
         return {alive = self.alive, counts = self.counts, inputs = self.inputs,
             auto = window:GetFlag("dw.auto.skill"), autoStatus = self.autoStatus,
             staminaEnabled = window:GetFlag("dw.stamina.enabled"), staminaStatus = self.staminaStatus,
-            stamina = staminaState:Get(), diagnostics = window:GetDiagnostics()}
+            stamina = staminaState:Get(), libraryVersion = self.libraryVersion, diagnostics = window:GetDiagnostics()}
     end
     row:AddButton({Id = "dw.stop", Title = "Parar tudo", Text = "PARAR", Icon = "close",
         Tooltip = "Remove os ESPs, para o auto minigame e restaura o sprint.", Callback = function() hub:Stop(); return true end})
@@ -369,7 +465,7 @@ local function main()
         Tooltip = "Destrói a janela e limpa todos os recursos do script.", Callback = function() hub:Destroy(); return true end})
     window:Notify({Title = "Dandy Retro", Content = "ESP pronto. Auto minigame e stamina são ativados nas suas abas.",
         Kind = "success", Icon = "eye", Duration = 5})
-    print("[DandyRetro] pronto · RetroBox " .. Library.Version)
+    print("[DandyRetro] pronto · RetroBox " .. hub.libraryVersion .. " · API 2 Stable")
 end
 
 task.defer(function()
